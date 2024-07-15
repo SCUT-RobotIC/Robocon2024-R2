@@ -63,7 +63,14 @@
 #include "CALCULATE.h"
 #include "main.h"
 #include "throwball.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "main.h"
+#include "cmsis_os.h"
 int condition[10];
+extern int conditionFlag[10];
+extern int conditionCounter[10];
+int swich[4];
 //计算校验位
 uint8_t CalculateParity(const uint8_t* data, int dataSize) {
 	//奇校验
@@ -100,64 +107,74 @@ void CAL_MESSAGE(void)
 			if((B1&0x01)==0&&(DataRe.data[BOT1]&0x01)==0x01)
 			{
 				condition[0]=1;
+	
 			}
 			else if((B1&0x01)==0x01&&(DataRe.data[BOT1]&0x01)==0)
 			{
 				condition[0]=0;//松开按键1
+				conditionCounter[0]=0;
 			}
 			
 			if((B1&0x02)==0&&(DataRe.data[BOT1]&0x02)==0x02)
 			{
 				condition[1]=1;//按下按键2
+
 			}
 			else if((B1&0x02)==0x02&&(DataRe.data[BOT1]&0x02)==0)
 			{
 				condition[1]=0;//松开按键2
+				conditionCounter[1]=0;
 			}
 			
 			if((B1&0x04)==0&&(DataRe.data[BOT1]&0x04)==0x04)
 			{
-				//按下按键3
+				condition[2]=1;//按下按键3
 			}
 			else if((B1&0x04)==0x04&&(DataRe.data[BOT1]&0x04)==0)
 			{
-				//松开按键3
+				condition[2]=0;//松开按键3
+				conditionCounter[2]=0;
 			}
 			
 			if((B1&0x08)==0&&(DataRe.data[BOT1]&0x08)==0x08)
 			{
-				//按下按键4
+				condition[3]=1;//按下按键4
 			}
 			else if((B1&0x08)==0x08&&(DataRe.data[BOT1]&0x08)==0)
 			{
-				//松开按键4
+				condition[3]=0;
+				conditionCounter[3]=0;//松开按键4
 			}
 			
 			if((B1&0x10)==0&&(DataRe.data[BOT1]&0x10)==0x10)
 			{
-				//按下按键5
+				condition[4]=1;//按下按键5
 			}
 			else if((B1&0x10)==0x10&&(DataRe.data[BOT1]&0x10)==0)
 			{
-				//松开按键5
+				condition[4]=0;
+				conditionCounter[4]=0;//松开按键5
 			}
 			
 			if((B1&0x20)==0&&(DataRe.data[BOT1]&0x20)==0x20)
 			{
-				//按下按键6
+				condition[5]=1;//按下按键6
 			}
 			else if((B1&0x20)==0x20&&(DataRe.data[BOT1]&0x20)==0)
 			{
-				//松开按键6
+				condition[5]=0;//松开按键6
+				conditionCounter[5]=0;//松开按键6
+
 			}
 			
 			if((B1&0x40)==0&&(DataRe.data[BOT1]&0x40)==0x40)
 			{
-				//按下按键7
+				condition[6]=1;//松开按键7
 			}
 			else if((B1&0x40)==0x40&&(DataRe.data[BOT1]&0x40)==0)
 			{
-				//松开按键7
+				condition[6]=0;//松开按键7
+				conditionCounter[6]=0;//松开按键7
 			}
 			
 			if((B1&0x80)==0&&(DataRe.data[BOT1]&0x80)==0x80)
@@ -174,20 +191,20 @@ void CAL_MESSAGE(void)
 			//开关更新
 			if((B2&0x01)==0&&(DataRe.data[BOT2]&0x01)==0x01)
 			{
-				//开关A1开
+				swich[0]=1;//开关A1开
 			}
 			else if((B2&0x01)==0x01&&(DataRe.data[BOT2]&0x01)==0)
 			{
-				//开关A1关
+				swich[0]=0;//开关A1关
 			}
 			
 			if((B2&0x02)==0&&(DataRe.data[BOT2]&0x02)==0x02)
 			{
-				//开关A2开
+				swich[1]=1;//开关A2开
 			}
 			else if((B2&0x02)==0x02&&(DataRe.data[BOT2]&0x02)==0)
 			{
-				//开关A2关
+				swich[1]=0;//开关A2关
 			}
 			
 			if((B2&0x04)==0&&(DataRe.data[BOT2]&0x04)==0x04)

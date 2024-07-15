@@ -1,20 +1,20 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2023 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2023 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -29,22 +29,45 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-#include "pidctl.h"
+#include "PID_MODEL.h"
 #include "arm_math.h"
 #include "bsp_can.h"
 #include "motorctrl.h"
 #include "stdio.h"
-#include "CALCULATE.h"
+#include "calculate.h"
 #include "math.h"
 #include "delay.h"
+#include "solve.h"
 #include "throwball.h"
+#include "sbus.h"
+// #include "R1_Ball_MODEL.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 #define VEL      1
 #define ANG      2
+
+#define USART_REC_LEN  			100  	//
+#define RXBUFFERSIZE   			1 		//
+
+#define CatchBallInit 90
+
+uint8_t USART2_RX_BUF[USART_REC_LEN]; 
+uint16_t USART2_RX_STA = 0; 
+uint8_t aRxBuffer2[RXBUFFERSIZE];		  
+UART_HandleTypeDef UART2_Handler; 
+
+
+uint8_t USART6_RX_BUF[USART_REC_LEN]; 
+uint16_t USART6_RX_STA = 0; 
+uint8_t aRxBuffer6[RXBUFFERSIZE];		  
+UART_HandleTypeDef UART6_Handler; 
+
+
+TGT_COOR TC;
+REAL_COOR RC;
+
 extern int condition;
 extern motor_measure_t   *motor_data[8];
 extern motor_measure_t   *motor_data1[8];
@@ -57,16 +80,19 @@ typedef struct __FILE FILE;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
- 
+#define USART_REC_LEN 100 //
+#define RXBUFFERSIZE 1    //
+#define VEL      1
+#define ANG      2
 
 
-int receivefactor=0;
-int factor=0;
-int factor1=0;
+int receivefactor[4];
+//int factor=0;
+//int factor1=0;
 
 
-int flag=0;
-int flag1=0;
+//int flag=0;
+//int flag1=0;
 int dir[4];
 int ang[4];
 int angtemp[4];
@@ -77,7 +103,7 @@ double theta[4];
 
 
 DataPacket DataRe;
-int16_t lx,ly,rx,ry,lp,rp;
+int16_t lx,ly,rx,ry,lp,rp,LX,LY,RX,RY;
 uint8_t B1,B2;
 uint8_t Cal_Parity;
 	
@@ -86,6 +112,11 @@ double a,b,c,d=0;
 uint8_t USART_FLAG=0;
 extern double LowAng,HighAng;
 
+
+int ML_CH3 =  1224  ; // left_spd
+int ML_CH4 =  1003 ; // rotate 
+int MR_CH2 =  996 ; //  right_y  max 1400 min 600
+int MR_CH1 =  1000 ;  // right_x
 
 
 /* USER CODE END PD */
@@ -149,28 +180,96 @@ int main(void)
   MX_IWDG_Init();
   MX_CAN2_Init();
   MX_USART2_UART_Init();
-  MX_TIM2_Init();
-  MX_TIM3_Init();
   MX_TIM5_Init();
+  MX_TIM3_Init();
+  MX_TIM2_Init();
+  MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
-	HAL_UART_Receive_DMA(&huart3, (uint8_t*)&DataRe, 1);
-	pidctl_initialize();
-	HAL_TIM_Base_Start_IT(&htim10); // ֐¶ϊ	
-	can_filter_init();
-	HAL_CAN_Start(&hcan1); 
-	HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
-  HAL_CAN_Start(&hcan2); 
-	HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING);
-  HAL_TIM_PWM_Start(&htim2,TIM_CHANNEL_1);
-	HAL_TIM_PWM_Start(&htim2,TIM_CHANNEL_2);
-	 HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_4);
-	HAL_TIM_PWM_Start(&htim5,TIM_CHANNEL_3);
-		pid3508(1.5, 0.3, 0.01);
-	  Apid3508(0.5,0.1, 0.01);
-		pid2006(1.5, 0.3, 0.01);
-		Apid2006(0.5,0.1, 0.01);
+  // Controler Receive Init
+  HAL_UART_Receive_DMA(&huart3, (uint8_t *)&DataRe, 1);
+  HAL_UART_Receive_DMA(&huart2, aRxBuffer2, 1);
+  HAL_UART_Receive_DMA(&huart6, aRxBuffer6, 1);
+  // MATLAB Init
+  PID_MODEL_initialize();
+  HAL_TIM_Base_Start_IT(&htim10);
 
-		RiseBall_Init();
+  // CAN Init
+  can_filter_init();
+  HAL_CAN_Start(&hcan1);
+  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+  HAL_CAN_Start(&hcan2);
+  HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+  // Chassis PID Init
+	
+  PID_Speed_Para_Init(1, 1, 10 , 3 , 0.01);
+  PID_Speed_Para_Init(1, 2, 10 , 3 , 0.01);
+  PID_Speed_Para_Init(1, 3, 10 , 3 , 0.01);
+  PID_Speed_Para_Init(1, 4, 10 , 3 , 0.01);
+  PID_Angle_S_Para_Init(1, 1 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(1, 1 , 0.5 , 0.1 , 0.01);
+  PID_Angle_S_Para_Init(1, 2 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(1, 2 , 0.5 , 0.1 , 0.01);
+  PID_Angle_S_Para_Init(1, 3 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(1, 3 , 0.5 , 0.1 , 0.01);
+  PID_Angle_S_Para_Init(1, 4 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(1, 4 , 0.5 , 0.1 , 0.01);
+		
+  PID_Speed_Para_Init(2, 1, 1.5 , 0.3 , 0.01);
+  PID_Speed_Para_Init(2, 2, 1.5 , 0.3 , 0.01);
+  PID_Speed_Para_Init(2, 3, 1.5 , 0.3 , 0.01);
+  PID_Speed_Para_Init(2, 4, 1.5 , 0.3 , 0.01);		
+																				 
+	PID_Angle_S_Para_Init(2, 1 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(2, 1 , 0.5 , 0.1 , 0.01);
+  PID_Angle_S_Para_Init(2, 2 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(2, 2 , 0.5 , 0.1 , 0.01);
+  PID_Angle_S_Para_Init(2, 3 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(2, 3 , 0.5 , 0.1 , 0.01);
+  PID_Angle_S_Para_Init(2, 4 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(2, 4 , 0.5 , 0.1 , 0.01);
+																				 
+	//Get ball PID init
+	PID_Speed_Para_Init(1, 5, 10 , 3 , 0.01);
+	PID_Speed_Para_Init(1, 6, 10 , 3 , 0.01);
+	//throw ball PID init
+	PID_Speed_Para_Init(1, 7, 10 , 3 , 0.01);
+	PID_Angle_S_Para_Init(1, 7 , 1.5 , 0.3 , 0.01);
+  PID_Angle_A_Para_Init(1, 7 , 0.5 , 0.1 , 0.01);
+	rtP.TRANS_CH1_7 = 0.7;
+	
+	//get ball away
+	PID_Speed_Para_Init(2, 5, 1.5 , 0.3 , 0.01);
+  PID_Speed_Para_Init(2, 6, 1.5 , 0.3 , 0.01);	
+	
+	set_mode(VEL, VEL, VEL, VEL, VEL, VEL, VEL,
+             VEL, VEL, VEL, VEL, VEL, VEL, VEL); 
+  // Clamp TIM Init
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+	HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_3);
+	Set_servo(&htim3, TIM_CHANNEL_1, 10, 20000, 20);//fai(�������ʾ�Ķ��)
+	Set_servo(&htim3, TIM_CHANNEL_2,0, 20000, 20);//theta
+//	Set_servo(&htim5, TIM_CHANNEL_3,CatchBallInit,20000,20);
+  // Clamp PID Init
+  // PID_Angle_S_Para_Init(2, 3, 1.5, 0.3, 0.01);
+  // PID_Angle_S_Para_Init(2, 4, 1.5, 0.3, 0.01);
+
+  // PID_Angle_A_Para_Init(2, 3, 0.5, 0.1, 0.01);
+  // PID_Angle_A_Para_Init(2, 4, 0.5, 0.1, 0.01);
+//  PID_Angle_S_Para_Init(2, 3, 0.6901 * 0.75, 2.3727 * 0.17, 0.01);
+//  PID_Angle_S_Para_Init(2, 4, 0.6901 * 0.7, 2.3727 * 0.11, 0.0126);
+
+//  PID_Angle_A_Para_Init(2, 3, 0.83005 * 0.85, 0.38548 * 0.02, 0.04    );
+//  PID_Angle_A_Para_Init(2, 4, 0.83005 * 0.6 , 0.38548 * 0.02, 0.051858);
+
+//  rtP.TRANS_CH2_3 = 1.1;
+//  rtP.TRANS_CH2_4 = 0.4;
+
+//  rtP.DEADBAND_CH2_3 = 800;
+//  rtP.DEADBAND_CH2_4 = 800;
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -187,29 +286,12 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-
-
-//		Vx=2000;
-//		Vy=2000;
-//		while(ANGs.flag1!=1||ANGs.flag2!=1||ANGs.flag3!=1||ANGs.flag4!=1){
-//			for(int i=0;i<4;i++)
-//				MotorSignal[i].thetas=MotorSignal[i].thetas+0.1;
-//		}
-//				for(int i=0;i<4;i++)
-//		ang[i]=ANGs.ang[i];
-
-
-
-	while (1)
-  {				
-
-
+  while (1)
+  {
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
-
   }
   /* USER CODE END 3 */
 }
@@ -262,8 +344,7 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-
-//void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) 
+// void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 //{
 //		if(DataRe.header==0xAA)
 //		{
@@ -274,42 +355,109 @@ void SystemClock_Config(void)
 //		{
 //			HAL_UART_Receive_DMA(&huart3, (uint8_t*)&DataRe, 1);
 //		}
-//}
-	void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-		if (huart->Instance == USART3)
-		{
-			if(DataRe.header==0xAA && USART_FLAG==0)
-			{		receivefactor=1;
-				CAL_MESSAGE();
-				HAL_UART_Receive_DMA(&huart3, (uint8_t*)&DataRe+1, sizeof(DataPacket)-1);
-				USART_FLAG=1;
-			}
-			if(DataRe.header==0xAA && USART_FLAG==1)
-			{		receivefactor=1;
-				CAL_MESSAGE();
-				HAL_UART_Receive_DMA(&huart3, (uint8_t*)&DataRe, sizeof(DataPacket));
-			}
-			else
-			{
-				HAL_UART_Receive_DMA(&huart3, (uint8_t*)&DataRe, 1);
-				USART_FLAG=0;
-			}
-		}
+// }
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART3)
+  {
+    if (DataRe.header == 0xAA && USART_FLAG == 0)
+    {
+      receivefactor[0] = 1;
+      CAL_MESSAGE();
+      HAL_UART_Receive_DMA(&huart3, (uint8_t *)&DataRe + 1, sizeof(DataPacket) - 1);
+      USART_FLAG = 1;
+    }
+    if (DataRe.header == 0xAA && USART_FLAG == 1)
+    {
+      receivefactor[0] = 1;
+      CAL_MESSAGE();
+      HAL_UART_Receive_DMA(&huart3, (uint8_t *)&DataRe, sizeof(DataPacket));
+    }
+    else
+    {
+      HAL_UART_Receive_DMA(&huart3, (uint8_t *)&DataRe, 1);
+      USART_FLAG = 0;
+    }
+  }
 
-	}
+  while (huart->Instance == USART2) // uart2 ?
+  {
+    USART2_RX_BUF[USART2_RX_STA] = aRxBuffer2[0];
+    if (USART2_RX_STA == 0 && USART2_RX_BUF[USART2_RX_STA] != 0x0F)
+    {
+      HAL_UART_Receive_DMA(&huart2, aRxBuffer2, 1);
+      break; //
+    }
+    USART2_RX_STA++;
+    HAL_UART_Receive_DMA(&huart2, aRxBuffer2, 1);
+    if (USART2_RX_STA > USART_REC_LEN)
+      USART2_RX_STA = 0;                                                              //
+    if (USART2_RX_BUF[0] == 0x0F && USART2_RX_BUF[15] == 0xAA && USART2_RX_STA == 16) // �?测包头包尾以及数据包长度
+    {
+      Receive();
+      receivefactor[1] = 1;
+      Reach_TGT();
+      //			for(int i=0;i<14;i++)
+      //			  USART2_RX_BUF[i] = 0;//清除数据
+      USART2_RX_STA = 0;
+    }
+    else if (!(USART2_RX_BUF[0] == 0x0F && USART2_RX_BUF[15] == 0xAA) && USART2_RX_STA == 16)
+    {
+      for (int i = 0; i < 16; i++)
+        USART2_RX_BUF[i] = 0; // 清除数据
+      USART2_RX_STA = 0;
+    }
 
-
-	//错误回调
-	void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
-	{
-		if (huart->Instance == USART3)
-		{
-			HAL_UART_Receive_DMA(&huart3, (uint8_t*)&DataRe, 1);
-			USART_FLAG=0;
-		}
-	}
-
+    break;
+  }
 	
+	
+		while (huart->Instance == USART6) //uart2 ?
+	{
+		USART6_RX_BUF[USART6_RX_STA] = aRxBuffer6[0];
+		if (USART6_RX_STA == 0 && USART6_RX_BUF[USART6_RX_STA] != 0x0F) 	
+		{			HAL_UART_Receive_DMA(&huart6,aRxBuffer6,1);	
+		break; //
+			}
+		USART6_RX_STA++;
+			HAL_UART_Receive_DMA(&huart6,aRxBuffer6,1);
+		if (USART6_RX_STA > USART_REC_LEN) USART6_RX_STA = 0;  //
+		if (USART6_RX_BUF[0] == 0x0F && USART6_RX_BUF[24] == 0x00 && USART6_RX_STA == 25)	//�?测包头包尾以及数据包长度
+		{
+			update_sbus(USART6_RX_BUF);
+		  RX =  SBUS_CH.CH1 - MR_CH1;
+		  RY =  SBUS_CH.CH2 - MR_CH2; 
+      LX =  SBUS_CH.CH4 - ML_CH4; 
+			if(receivefactor[1]==0){
+			receivefactor[0]=1;
+			}
+			for(int i=0;i<25;i++)
+			  USART6_RX_BUF[i] = 0;//清除数据
+			USART6_RX_STA = 0;
+		}
+		else if(!(USART6_RX_BUF[0] == 0x0F && USART6_RX_BUF[24] == 0x00) && USART6_RX_STA == 25){
+			for(int i=0;i<25;i++)
+			  USART6_RX_BUF[i] = 0;//清除数据
+			USART6_RX_STA = 0;
+		}
+
+		break;
+	}
+}
+
+// 错误回调
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART3)
+  {
+    HAL_UART_Receive_DMA(&huart3, (uint8_t *)&DataRe, 1);
+    USART_FLAG = 0;
+  }
+  if (huart->Instance == USART2)
+  {
+    HAL_UART_Receive_DMA(&huart2, aRxBuffer2, 1);
+  }
+}
 
 /* USER CODE END 4 */
 
@@ -324,95 +472,23 @@ void SystemClock_Config(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-	if(htim == &htim10)
-	{
-if(Spds.flag[4]==1){
-			if(Spds.flag[0]==1&&Spds.flag[2]==0)
-		{rtU.yaw_target4=0;
-			HighAng=motor_data[4]->ecd+motor_data[4]->circle*8191;
-				Spds.flag[2]=1;
-			Spds.flag[0]=0;
-		}
-		if(Spds.flag[1]==1&&Spds.flag[3]==0)
-		{rtU.yaw_target4=0;
-			Spds.flag[1]=0;
-
-				
-			LowAng=motor_data[4]->ecd+motor_data[4]->circle*8191;
-			if(Spds.flag[6]==0){
-			HighAng=LowAng-234568;
-			Spds.flag[6]=1;
-			}
-			Spds.flag[3]=1;
-			
-		}
-if((motor_data[4]->ecd+motor_data[4]->circle*8191>LowAng&&rtU.yaw_target4>0)&&Spds.flag[3]==1)
-{rtU.yaw_target4=0;
-
-}
-if((motor_data[4]->ecd+motor_data[4]->circle*8191<HighAng&&rtU.yaw_target4<0)&&Spds.flag[2]==1)
-{rtU.yaw_target4=0;
-}
-}
-		Vx=rx/9;
-		Vy=ry/9;
-		omega=-lx/9;
-
-			
-			factor1++;
-		
-		if(receivefactor==0)//没接收到就增加标志位
-			factor++;
-		if(factor>300){
-			Vx=0;Vy=0;omega=0;rx=0;ry=0;lx=0;ly=0;
-			factor=301;
-		}//1s没收到就全部停下
-		if(receivefactor==1)//接收到就标志位置0
-			factor=0;
-		
-		if (factor1==50){
-			receivefactor=0;//0.05s更新1次确定为没接收到
-			factor1=0;
-		}
-					
-		HAL_IWDG_Refresh(&hiwdg);//喂狗
-		
-		/* SPD TEST */
-		
-
-		get_msgn();
-		
-		set_mode(VEL,VEL,VEL,VEL,VEL,VEL,VEL,VEL,
-		         ANG,ANG,ANG,ANG,VEL,VEL,VEL,VEL);//前八个can1,后八个can2
-
-		ctrlmotor( Vx,  Vy,  omega,dir[0],dir[1],dir[2],dir[3],flag1);
-		
-
-		rtU.yaw_target7=0;
-		rtU.yaw_target8    = theta[0]*36*8191*47/(17*360); 
-		rtU.yaw_target9    = theta[1]*36*8191*47/(17*360); 
-		rtU.yaw_target10   = theta[2]*36*8191*47/(17*360); 
-		rtU.yaw_target11   = theta[3]*36*8191*47/(17*360); 
-		rtU.yaw_target12=1000;
-		rtU.yaw_target13=2000;
-		rtU.yaw_target14=3000;
-		rtU.yaw_target15=4000;
-//  
-    assign_output();
-	  pidctl_step();
-		
-		// data update
-		motor_state_update();
-		motor_state_update1();
-	}
-	
 
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM4) {
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
+  if (htim == &htim10)
+  {
 
+				
+
+		
+    assign_output();
+    PID_MODEL_step();
+    motor_state_update();
+    motor_state_update1();
+  }
   /* USER CODE END Callback 1 */
 }
 
